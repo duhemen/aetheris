@@ -1,0 +1,12 @@
+{
+  "name": "aetheris",
+  "version": "9.0.0",
+  "private": true,
+  "scripts": {
+    "build:css": "tailwindcss -i ./frontend/tailwind-input.css -o ./frontend/tailwind.css --minify",
+    "watch:css": "tailwindcss -i ./frontend/tailwind-input.css -o ./frontend/tailwind.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.14"
+  }
+}

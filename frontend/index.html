@@ -1,0 +1,1156 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Aetheris v4 — Balance Engine</title>
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#020617" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<link rel="stylesheet" href="/static/tailwind.css" />
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.167.1/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.167.1/examples/jsm/",
+    "three/webgpu": "https://unpkg.com/three@0.167.1/build/three.webgpu.js",
+    "three/tsl": "https://unpkg.com/three@0.167.1/build/three.tsl.js"
+  }
+}
+</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+  body { font-family: 'Inter', system-ui, sans-serif; }
+  .glass { background: rgba(15,23,42,0.75); backdrop-filter: blur(12px);
+           border: 1px solid rgba(148,163,184,0.15); }
+  #viz { width: 100%; height: 460px; border-radius: 1rem; overflow: hidden; position: relative; }
+  .badge { font-size: 0.65rem; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
+  .tab { cursor: pointer; padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; }
+  .tab.active { background: rgba(34,211,238,0.15); color: #67e8f9; }
+  #heatmap { image-rendering: pixelated; width: 100%; height: 260px; }
+  .btn-mini { font-size: 0.7rem; padding: 4px 8px; border-radius: 6px; font-weight: 600; }
+  .rec-dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#ef4444;
+             animation: pulse 1s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .preset-item {
+    display:flex; justify-content:space-between; align-items:center;
+    padding: 4px 8px; border-radius: 6px; font-size: 0.75rem;
+    background: rgba(30,41,59,0.6); margin-bottom: 3px;
+  }
+  .preset-item button { font-size: 0.65rem; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+<div class="max-w-7xl mx-auto p-6">
+  <header class="mb-6 text-center">
+    <h1 class="text-4xl font-bold bg-gradient-to-r from-cyan-400 to-purple-500 bg-clip-text text-transparent">
+      🌌 Aetheris v4: The Balance Engine
+    </h1>
+    <p class="text-slate-400 mt-2 flex items-center justify-center gap-2 flex-wrap">
+      <span>Cosmo-Cognitive Simulation</span>•
+      <span id="wsStatus" class="text-rose-400">● off</span>•
+      <span id="fedBadge" class="badge bg-slate-700 text-slate-300">Fed: 0</span>
+      <span id="redisBadge" class="badge bg-slate-700 text-slate-300">Redis: ?</span>
+      <span class="badge bg-cyan-500/20 text-cyan-300">Bloom</span>
+      <span class="badge bg-purple-500/20 text-purple-300">RL</span>
+      <span class="badge bg-amber-500/20 text-amber-300">Adaptive</span>
+      <span class="badge bg-rose-500/20 text-rose-300">Record</span>
+    </p>
+  </header>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- PANEL KIRI -->
+    <div class="glass rounded-2xl p-5 lg:col-span-1 max-h-[85vh] overflow-y-auto">
+      <div class="flex gap-2 mb-4 flex-wrap">
+        <div class="tab active" data-tab="params">Parameter</div>
+        <div class="tab" data-tab="presets">Presets</div>
+        <div class="tab" data-tab="rl">RL</div>
+        <div class="tab" data-tab="analytics">Analytics</div>
+      </div>
+
+      <!-- Tab: Parameter -->
+      <div data-panel="params">
+        <div id="controls" class="space-y-3"></div>
+        <div class="mt-4">
+          <label class="text-slate-300 text-sm">Topologi</label>
+          <select id="topology" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm">
+            <option value="random">Random</option>
+            <option value="ring">Ring</option>
+            <option value="star">Star</option>
+            <option value="full">Full Mesh</option>
+          </select>
+        </div>
+        <div class="mt-4 space-y-2 text-sm">
+          <label class="flex items-center gap-2">
+            <input type="checkbox" id="adaptive" checked class="accent-cyan-500" />
+            <span class="text-slate-300">Adaptive Rewiring</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="checkbox" id="rlOn" class="accent-purple-500" />
+            <span class="text-slate-300">Aktifkan RL Auto-Tune</span>
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="checkbox" id="federated" class="accent-amber-500" />
+            <span class="text-slate-300">Federation Broadcast</span>
+          </label>
+        </div>
+
+        <!-- Video Export (F) -->
+        <div class="mt-5 p-3 border border-slate-700 rounded-lg">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-sm text-slate-300">🎥 Rekam Video</span>
+            <span id="recStatus" class="text-xs text-slate-500">idle</span>
+          </div>
+          <div class="flex gap-2">
+            <button id="recStart" class="flex-1 btn-mini bg-rose-500 hover:bg-rose-400 text-white">
+              ● Start
+            </button>
+            <button id="recStop" class="flex-1 btn-mini bg-slate-700 hover:bg-slate-600 text-white" disabled>
+              ■ Stop
+            </button>
+          </div>
+          <div class="text-xs text-slate-500 mt-2">
+            Format: WebM (VP9) • 30fps • 15 Mbps
+          </div>
+        </div>
+
+        <div id="statusBox" class="mt-5 space-y-2"></div>
+      </div>
+
+      <!-- Tab: Presets (G) -->
+      <div data-panel="presets" class="hidden">
+        <h3 class="text-cyan-300 font-semibold mb-3">💾 Scenario Presets</h3>
+        <div id="presetList" class="mb-3"></div>
+
+        <div class="mt-3 space-y-2">
+          <input id="presetName" placeholder="Nama preset baru..."
+            class="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-sm" />
+          <button id="presetSave"
+            class="w-full bg-gradient-to-r from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-semibold text-sm py-2 rounded-lg">
+            Simpan Preset dari Parameter Sekarang
+          </button>
+        </div>
+      </div>
+
+      <!-- Tab: RL -->
+      <div data-panel="rl" class="hidden">
+        <h3 class="text-cyan-300 font-semibold mb-3">🧠 RL Auto-Tuner</h3>
+        <div class="space-y-2 text-xs">
+          <div>Generation: <span id="rlGen" class="font-mono text-cyan-300">0</span></div>
+          <div>Best Reward: <span id="rlBest" class="font-mono text-emerald-300">—</span></div>
+          <div>Sigma: <span id="rlSigma" class="font-mono text-amber-300">—</span></div>
+        </div>
+        <div class="mt-3 text-xs">
+          <div class="text-slate-400 mb-1">Best Params:</div>
+          <pre id="rlParams" class="bg-slate-900/60 p-3 rounded-lg text-cyan-300 text-xs overflow-x-auto">—</pre>
+        </div>
+        <div class="mt-4">
+          <canvas id="rlChart" height="140"></canvas>
+        </div>
+      </div>
+
+      <!-- Tab: Analytics -->
+      <div data-panel="analytics" class="hidden">
+        <h3 class="text-cyan-300 font-semibold mb-3">📊 Parameter Heatmap</h3>
+        <div class="grid grid-cols-2 gap-2 text-xs mb-2">
+          <div>
+            <label class="text-slate-400">X-axis</label>
+            <select id="xParam" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg p-1.5">
+              <option value="omega_s">omega_s</option>
+              <option value="omega_a">omega_a</option>
+              <option value="regulation">regulation</option>
+              <option value="ethics">ethics</option>
+              <option value="coupling">coupling</option>
+              <option value="omega_m">omega_m</option>
+              <option value="omega_lambda">omega_lambda</option>
+              <option value="c0">c0</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-slate-400">Y-axis</label>
+            <select id="yParam" class="w-full mt-1 bg-slate-800 border border-slate-700 rounded-lg p-1.5">
+              <option value="omega_a">omega_a</option>
+              <option value="omega_s">omega_s</option>
+              <option value="regulation">regulation</option>
+              <option value="ethics">ethics</option>
+              <option value="coupling">coupling</option>
+              <option value="omega_m">omega_m</option>
+              <option value="omega_lambda">omega_lambda</option>
+              <option value="c0">c0</option>
+            </select>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button id="runSweep" class="flex-1 bg-gradient-to-r from-amber-500 to-rose-500 hover:from-amber-400 hover:to-rose-400 text-white font-semibold text-sm py-2 rounded-lg">
+            Sweep 15×15
+          </button>
+          <button id="view3D" class="btn-mini bg-purple-500 hover:bg-purple-400 text-white" disabled>
+            View 3D
+          </button>
+        </div>
+        <div class="mt-3">
+          <canvas id="heatmap"></canvas>
+        </div>
+        <div class="mt-2 text-xs text-slate-400 text-center">
+          <span class="text-cyan-300">■</span> rendah
+          <span class="mx-2"></span>
+          <span class="text-emerald-300">■</span> tinggi
+        </div>
+      </div>
+    </div>
+
+    <!-- PANEL KANAN -->
+    <div class="lg:col-span-2 space-y-6">
+      <div class="glass rounded-2xl p-4">
+        <div class="flex justify-between items-center mb-2">
+          <h3 class="text-lg font-semibold text-cyan-300">🔮 Quantum Fluid Network</h3>
+          <div class="flex gap-1">
+            <button data-view="network" class="viewBtn btn-mini bg-cyan-500/30 text-cyan-200">Network</button>
+            <button data-view="heatmap3d" class="viewBtn btn-mini bg-slate-700 text-slate-300">Heatmap 3D</button>
+          </div>
+        </div>
+        <div id="viz"></div>
+      </div>
+      <div class="glass rounded-2xl p-4">
+        <h3 class="text-lg font-semibold mb-2 text-purple-300">Kosmos Makro & AI Mean</h3>
+        <div style="position: relative; height: 220px;">
+          <canvas id="chart"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/static/v5-extras.js"></script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+/* ============================================================
+   1. TABS
+============================================================ */
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    const key = tab.dataset.tab;
+    document.querySelectorAll('[data-panel]').forEach(p => {
+      p.classList.toggle('hidden', p.dataset.panel !== key);
+    });
+  });
+});
+
+/* ============================================================
+   2. SLIDERS
+============================================================ */
+function slider(id, label, min, max, step, value) {
+  return `<div>
+    <div class="flex justify-between text-sm mb-1">
+      <label for="${id}" class="text-slate-300">${label}</label>
+      <span id="${id}Val" class="text-cyan-400 font-mono">${value}</span>
+    </div>
+    <input type="range" id="${id}" min="${min}" max="${max}" step="${step}" value="${value}"
+      class="w-full accent-cyan-500" />
+  </div>`;
+}
+
+document.getElementById('controls').innerHTML = [
+  slider('omega_m','Ωm (Materi)',0,1,0.01,0.3),
+  slider('omega_lambda','ΩΛ (Energi Gelap)',0,1,0.01,0.7),
+  slider('omega_s','ΩS (Node Setan)',0,1,0.01,0.5),
+  slider('omega_a','ΩA (Node Malaikat)',0,1,0.01,0.5),
+  slider('regulation','R (Regulasi)',0,1,0.01,0.2),
+  slider('ethics','E (Etika)',0,1,0.01,0.3),
+  slider('coupling','λ (Coupling)',0,2,0.05,0.3),
+  slider('n_agents','N (Agen)',2,40,1,12),
+  slider('c0','c0 (AI Awal)',0.01,3,0.01,0.1),
+  slider('h0','H0 (Hubble)',10,200,1,70),
+  slider('t_max','t_max (Gyr)',1,50,1,14),
+].join('');
+
+document.querySelectorAll('input[type=range]').forEach(el => {
+  el.addEventListener('input', () => {
+    document.getElementById(el.id + 'Val').textContent = el.value;
+    scheduleSend();
+  });
+});
+['topology','adaptive','rlOn','federated'].forEach(id => {
+  document.getElementById(id).addEventListener('change', scheduleSend);
+});
+
+/* ============================================================
+   3. THREE.JS SCENE
+============================================================ */
+const viz = document.getElementById('viz');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, viz.clientWidth / viz.clientHeight, 0.1, 200);
+camera.position.set(0, 0, 9);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true });
+renderer.setSize(viz.clientWidth, viz.clientHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x020617, 1);
+viz.appendChild(renderer.domElement);
+
+const orbit = new OrbitControls(camera, renderer.domElement);
+orbit.enableDamping = true;
+orbit.autoRotate = true;
+orbit.autoRotateSpeed = 0.8;
+
+/* 4. BLOOM */
+const composer = new EffectComposer(renderer);
+composer.addPass(new RenderPass(scene, camera));
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(viz.clientWidth, viz.clientHeight),
+  1.1, 0.55, 0.80
+);
+composer.addPass(bloomPass);
+
+/* 5. BACKGROUND SKYDOME */
+const bgMat = new THREE.ShaderMaterial({
+  uniforms: { uTime: { value: 0 } },
+  vertexShader: `
+    varying vec3 vPos;
+    void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }
+  `,
+  fragmentShader: `
+    uniform float uTime;
+    varying vec3 vPos;
+    float hash(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453); }
+    float noise(vec3 p){
+      vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+      return mix(mix(mix(hash(i), hash(i+vec3(1,0,0)), f.x),
+                     mix(hash(i+vec3(0,1,0)), hash(i+vec3(1,1,0)), f.x), f.y),
+                 mix(mix(hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)), f.x),
+                     mix(hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)), f.x), f.y), f.z);
+    }
+    void main(){
+      vec3 dir = normalize(vPos);
+      float n = noise(dir * 3.0 + uTime * 0.15) * 0.5
+              + noise(dir * 6.0 - uTime * 0.10) * 0.3
+              + noise(dir * 12.0 + uTime * 0.05) * 0.2;
+      vec3 colA = vec3(0.01, 0.02, 0.08);
+      vec3 colB = vec3(0.05, 0.20, 0.35);
+      vec3 col = mix(colA, colB, n * n);
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `,
+  side: THREE.BackSide, depthWrite: false,
+});
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(80, 32, 32), bgMat));
+
+/* 6. NODE SHADER */
+const nodeVert = `
+  uniform float uTime;
+  varying vec3 vNormal;
+  varying vec3 vPos;
+  void main() {
+    vNormal = normalize(normalMatrix * normal);
+    vPos = position;
+    vec3 p = position + 0.10 * sin(uTime * 2.0 + position.y * 6.0) * normal;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+  }
+`;
+const nodeFrag = `
+  uniform float uTime;
+  uniform vec3 uColor;
+  uniform float uIntensity;
+  varying vec3 vNormal;
+  varying vec3 vPos;
+  float hash(vec3 p){ return fract(sin(dot(p, vec3(127.1,311.7,74.7))) * 43758.5453); }
+  float noise(vec3 p){
+    vec3 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+    return mix(mix(mix(hash(i), hash(i+vec3(1,0,0)), f.x),
+                   mix(hash(i+vec3(0,1,0)), hash(i+vec3(1,1,0)), f.x), f.y),
+               mix(mix(hash(i+vec3(0,0,1)), hash(i+vec3(1,0,1)), f.x),
+                   mix(hash(i+vec3(0,1,1)), hash(i+vec3(1,1,1)), f.x), f.y), f.z);
+  }
+  void main() {
+    float n = noise(vPos * 3.0 + uTime * 0.8);
+    float fresnel = pow(1.0 - abs(dot(vNormal, vec3(0.0, 0.0, 1.0))), 2.0);
+    vec3 base = uColor * (0.6 + 0.6 * n);
+    vec3 glow = uColor * fresnel * 2.0;
+    gl_FragColor = vec4((base + glow) * uIntensity, 1.0);
+  }
+`;
+
+const nodeGroup = new THREE.Group(); scene.add(nodeGroup);
+const edgeGroup = new THREE.Group(); scene.add(edgeGroup);
+const heatmapGroup = new THREE.Group(); scene.add(heatmapGroup);
+heatmapGroup.visible = false;
+
+const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.35 });
+const nodeGeo = new THREE.SphereGeometry(0.32, 32, 32);
+let nodeMeshes = [];
+let maxC = 1.0;
+
+function rebuildScene(result) {
+  while (nodeGroup.children.length) nodeGroup.remove(nodeGroup.children[0]);
+  while (edgeGroup.children.length) edgeGroup.remove(edgeGroup.children[0]);
+  nodeMeshes = [];
+
+  result.positions.forEach(([x, y, z]) => {
+    const mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uColor: { value: new THREE.Color(0x22d3ee) },
+        uIntensity: { value: 1.0 },
+      },
+      vertexShader: nodeVert, fragmentShader: nodeFrag,
+    });
+    const m = new THREE.Mesh(nodeGeo, mat);
+    m.position.set(x, y, z);
+    nodeGroup.add(m);
+    nodeMeshes.push(m);
+  });
+
+  result.edges.forEach(([i, j]) => {
+    const g = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(...result.positions[i]),
+      new THREE.Vector3(...result.positions[j]),
+    ]);
+    edgeGroup.add(new THREE.Line(g, edgeMaterial));
+  });
+}
+
+function updateScene(result) {
+  if (nodeMeshes.length !== result.positions.length) rebuildScene(result);
+  const last = result.c_agents[result.c_agents.length - 1];
+  maxC = Math.max(0.5, ...last);
+
+  last.forEach((c, i) => {
+    const t = Math.min(1, c / maxC);
+    const col = new THREE.Color().setHSL(0.55 - 0.55 * t, 0.9, 0.55);
+    const mat = nodeMeshes[i]?.material;
+    if (mat?.uniforms) {
+      mat.uniforms.uColor.value.copy(col);
+      mat.uniforms.uIntensity.value = 0.6 + 1.6 * t;
+    }
+    nodeMeshes[i]?.scale.setScalar(0.7 + 1.3 * t);
+  });
+
+  if (result.rewiring_events?.length) {
+    edgeMaterial.color.setHex(0xf59e0b);
+    edgeMaterial.opacity = 0.55;
+  } else {
+    edgeMaterial.color.setHex(0x38bdf8);
+    edgeMaterial.opacity = 0.35;
+  }
+}
+
+/* 7. ANIMATE */
+function animate() {
+  requestAnimationFrame(animate);
+  const t = performance.now() * 0.001;
+  bgMat.uniforms.uTime.value = t;
+  nodeMeshes.forEach(m => {
+    if (m.material.uniforms) m.material.uniforms.uTime.value = t;
+  });
+  orbit.update();
+  composer.render();
+}
+animate();
+
+window.addEventListener('resize', () => {
+  const w = viz.clientWidth, h = viz.clientHeight;
+  camera.aspect = w / h; camera.updateProjectionMatrix();
+  renderer.setSize(w, h); composer.setSize(w, h); bloomPass.setSize(w, h);
+});
+
+/* ============================================================
+   8. 3D HEATMAP (H)
+============================================================ */
+let currentSweepData = null;
+
+function buildHeatmap3D(data) {
+  currentSweepData = data;
+  while (heatmapGroup.children.length) heatmapGroup.remove(heatmapGroup.children[0]);
+
+  const { grid, resolution } = data;
+  const size = 8;
+  const segs = resolution - 1;
+
+  // DataTexture: 2D RGBA grid
+  const texData = new Uint8Array(resolution * resolution * 4);
+  let minV = Infinity, maxV = -Infinity;
+  for (let i = 0; i < resolution; i++) {
+    for (let j = 0; j < resolution; j++) {
+      const v = grid[i][j];
+      if (v >= 0) { minV = Math.min(minV, v); maxV = Math.max(maxV, v); }
+    }
+  }
+  if (!isFinite(minV)) { minV = 0; maxV = 1; }
+  const range = Math.max(0.001, maxV - minV);
+
+  for (let i = 0; i < resolution; i++) {
+    for (let j = 0; j < resolution; j++) {
+      const v = grid[i][j];
+      const idx = (i * resolution + j) * 4;
+      if (v < 0) { texData[idx] = 30; texData[idx+1] = 41; texData[idx+2] = 59; texData[idx+3] = 255; continue; }
+      const t = (v - minV) / range;
+      const color = new THREE.Color().setHSL(0.5 - 0.5 * t, 0.85, 0.35 + 0.30 * t);
+      texData[idx] = color.r * 255;
+      texData[idx+1] = color.g * 255;
+      texData[idx+2] = color.b * 255;
+      texData[idx+3] = 255;
+    }
+  }
+
+  const tex = new THREE.DataTexture(texData, resolution, resolution, THREE.RGBAFormat);
+  tex.needsUpdate = true;
+  tex.magFilter = THREE.NearestFilter;
+  tex.minFilter = THREE.LinearFilter;
+
+  const geo = new THREE.PlaneGeometry(size, size, segs, segs);
+  const pos = geo.attributes.position;
+  for (let k = 0; k < pos.count; k++) {
+    const u = (pos.getX(k) / size) + 0.5;
+    const vv = (pos.getY(k) / size) + 0.5;
+    const gi = Math.floor(vv * resolution);
+    const gj = Math.floor(u * resolution);
+    const val = grid[Math.min(gi, resolution - 1)][Math.min(gj, resolution - 1)];
+    const h = val >= 0 ? (val - minV) / range : 0;
+    pos.setZ(k, h * 1.5);
+  }
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.y = -1;
+  heatmapGroup.add(mesh);
+
+  // Wireframe overlay
+  const wireMat = new THREE.MeshBasicMaterial({
+    color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.15,
+  });
+  const wire = new THREE.Mesh(geo, wireMat);
+  wire.rotation.x = -Math.PI / 2;
+  wire.position.y = -0.99;
+  heatmapGroup.add(wire);
+
+  document.getElementById('view3D').disabled = false;
+}
+
+/* View toggle */
+document.querySelectorAll('.viewBtn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const view = btn.dataset.view;
+    document.querySelectorAll('.viewBtn').forEach(b => {
+      b.classList.toggle('bg-cyan-500/30', b === btn);
+      b.classList.toggle('text-cyan-200', b === btn);
+      b.classList.toggle('bg-slate-700', b !== btn);
+      b.classList.toggle('text-slate-300', b !== btn);
+    });
+    if (view === 'heatmap3d' && currentSweepData) {
+      nodeGroup.visible = false;
+      edgeGroup.visible = false;
+      heatmapGroup.visible = true;
+      // Auto-reposition camera top-down
+      camera.position.set(0, 9, 0.5);
+      camera.lookAt(0, -1, 0);
+      orbit.target.set(0, -1, 0);
+      orbit.update();
+    } else {
+      nodeGroup.visible = true;
+      edgeGroup.visible = true;
+      heatmapGroup.visible = false;
+      camera.position.set(0, 0, 9);
+      orbit.target.set(0, 0, 0);
+      orbit.update();
+    }
+  });
+});
+document.getElementById('view3D').addEventListener('click', () => {
+  document.querySelector('[data-view="heatmap3d"]').click();
+});
+
+/* ============================================================
+   9. CHART.JS
+============================================================ */
+const chart = new Chart(document.getElementById('chart').getContext('2d'), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label: 'a(t) Kosmos', data: [], borderColor: '#22d3ee', tension: 0.3, pointRadius: 0, borderWidth: 2 },
+      { label: 'c̄(t) AI',    data: [], borderColor: '#a855f7', tension: 0.3, pointRadius: 0, borderWidth: 2 },
+    ],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    animation: { duration: 200 },
+    plugins: { legend: { labels: { color: '#94a3b8' } } },
+    scales: {
+      x: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' } },
+      y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' } },
+    },
+  },
+});
+
+const rlChart = new Chart(document.getElementById('rlChart').getContext('2d'), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [
+      { label: 'reward', data: [], borderColor: '#a855f7', tension: 0.3, pointRadius: 0 },
+      { label: 'best',   data: [], borderColor: '#10b981', tension: 0.3, pointRadius: 0 },
+    ],
+  },
+  options: {
+    responsive: true,
+    animation: { duration: 150 },
+    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 8 } } },
+    scales: {
+      x: { ticks: { color: '#64748b', maxTicksLimit: 6 }, grid: { display: false } },
+      y: { ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' } },
+    },
+  },
+});
+
+/* ============================================================
+   10. HEATMAP 2D + SWEEP
+============================================================ */
+const heatCanvas = document.getElementById('heatmap');
+const hctx = heatCanvas.getContext('2d');
+
+document.getElementById('runSweep').addEventListener('click', async () => {
+  const btn = document.getElementById('runSweep');
+  btn.disabled = true;
+  btn.textContent = 'Sweeping...';
+
+  const payload = {
+    x_param: document.getElementById('xParam').value,
+    y_param: document.getElementById('yParam').value,
+    resolution: 15,
+    base: {
+      omega_m: +document.getElementById('omega_m').value,
+      omega_lambda: +document.getElementById('omega_lambda').value,
+      omega_s: +document.getElementById('omega_s').value,
+      omega_a: +document.getElementById('omega_a').value,
+      regulation: +document.getElementById('regulation').value,
+      ethics: +document.getElementById('ethics').value,
+      coupling: +document.getElementById('coupling').value,
+      c0: +document.getElementById('c0').value,
+      n_agents: 8, t_max: 8,
+    },
+  };
+
+  try {
+    const res = await fetch('/api/analytics/sweep', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.error || data.detail) throw new Error(data.error || data.detail);
+    drawHeatmap(data);
+    buildHeatmap3D(data);
+  } catch (e) {
+    alert('Sweep gagal: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sweep 15×15';
+  }
+});
+
+function drawHeatmap(data) {
+  const { grid, resolution } = data;
+  heatCanvas.width = resolution * 20;
+  heatCanvas.height = resolution * 20;
+  const cell = 20;
+
+  // Normalisasi min/max dulu
+  let minV = Infinity, maxV = -Infinity;
+  for (let i = 0; i < resolution; i++)
+    for (let j = 0; j < resolution; j++) {
+      const v = grid[i][j];
+      if (v >= 0) { minV = Math.min(minV, v); maxV = Math.max(maxV, v); }
+    }
+  if (!isFinite(minV)) { minV = 0; maxV = 1; }
+  const range = Math.max(0.001, maxV - minV);
+
+  for (let i = 0; i < resolution; i++) {
+    for (let j = 0; j < resolution; j++) {
+      const v = grid[i][j];
+      let color;
+      if (v < 0) color = '#1e293b';
+      else {
+        const t = (v - minV) / range;        // ← fix: normalisasi
+        const hue = 180 - 140 * t;
+        color = `hsl(${hue}, 75%, ${30 + 25 * t}%)`;
+      }
+      hctx.fillStyle = color;
+      hctx.fillRect(j * cell, (resolution - 1 - i) * cell, cell - 1, cell - 1);
+    }
+  }
+}
+
+/* ============================================================
+   11. VIDEO EXPORT (F)
+============================================================ */
+let recorder = null;
+let recChunks = [];
+let recStartTime = 0;
+let recTimerInterval = null;
+
+const recStartBtn = document.getElementById('recStart');
+const recStopBtn = document.getElementById('recStop');
+const recStatus = document.getElementById('recStatus');
+
+recStartBtn.addEventListener('click', () => {
+  if (recorder && recorder.state === 'recording') return;
+
+  const stream = renderer.domElement.captureStream(30);
+
+  let mime = 'video/webm;codecs=vp9';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = 'video/webm;codecs=vp8';
+  if (!MediaRecorder.isTypeSupported(mime)) mime = 'video/webm';
+
+  recChunks = [];
+  try {
+    recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 15_000_000 });
+  } catch (e) {
+    alert('Browser tidak mendukung MediaRecorder: ' + e.message);
+    return;
+  }
+
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) recChunks.push(e.data);
+  };
+  recorder.onstop = () => {
+    const blob = new Blob(recChunks, { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url;
+    a.download = `aetheris-${ts}.webm`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  };
+
+  recorder.start(1000);
+  recStartTime = Date.now();
+  recStartBtn.disabled = true;
+  recStopBtn.disabled = false;
+  recStatus.innerHTML = '<span class="rec-dot"></span> recording';
+  recStatus.className = 'text-xs text-rose-400';
+
+  recTimerInterval = setInterval(() => {
+    const elapsed = ((Date.now() - recStartTime) / 1000).toFixed(1);
+    recStatus.innerHTML = `<span class="rec-dot"></span> ${elapsed}s`;
+  }, 100);
+});
+
+recStopBtn.addEventListener('click', () => {
+  if (recorder && recorder.state === 'recording') {
+    recorder.stop();
+    clearInterval(recTimerInterval);
+    recStartBtn.disabled = false;
+    recStopBtn.disabled = true;
+    recStatus.textContent = 'saved';
+    recStatus.className = 'text-xs text-emerald-400';
+    setTimeout(() => { recStatus.textContent = 'idle'; recStatus.className = 'text-xs text-slate-500'; }, 2500);
+  }
+});
+
+/* ============================================================
+   13. WEBSOCKET
+============================================================ */
+let ws = null;
+let sendTimer = null;
+let myIdentity = { user_id: null, nickname: null, color: null };
+let roomId = new URLSearchParams(location.search).get('room') || 'public';
+
+const wsStatus = document.getElementById('wsStatus');
+const fedBadge = document.getElementById('fedBadge');
+const redisBadge = document.getElementById('redisBadge');
+
+// Identity persisten
+(function loadIdentity() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('aetheris-id') || 'null');
+    if (saved?.user_id) return void (myIdentity = saved);
+  } catch {}
+  const uid = (crypto.randomUUID?.() || Math.random().toString(36).slice(2, 10)).slice(0, 8);
+  const colors = ['#22d3ee', '#a855f7', '#f59e0b', '#10b981', '#ef4444', '#3b82f6', '#ec4899'];
+  myIdentity = {
+    user_id: uid,
+    nickname: `Anon-${uid.slice(0, 4)}`,
+    color: colors[Math.floor(Math.random() * colors.length)],
+  };
+  localStorage.setItem('aetheris-id', JSON.stringify(myIdentity));
+})();
+
+function getPayload() {
+  const el = (id) => document.getElementById(id);
+  return {
+    type: "simulate",
+    room_id: roomId,
+    user_id: myIdentity.user_id,
+    nickname: myIdentity.nickname,
+    color: myIdentity.color,
+    omega_m: +el('omega_m').value,
+    omega_lambda: +el('omega_lambda').value,
+    omega_s: +el('omega_s').value,
+    omega_a: +el('omega_a').value,
+    regulation: +el('regulation').value,
+    ethics: +el('ethics').value,
+    coupling: +el('coupling').value,
+    n_agents: +el('n_agents').value,
+    c0: +el('c0').value,
+    h0: +el('h0').value,
+    t_max: +el('t_max').value,
+    topology: el('topology').value,
+    adaptive: el('adaptive').checked,
+    rl: el('rlOn').checked,
+    broadcast: el('federated').checked,
+    share_rl: el('federated').checked,
+    sync_room: document.getElementById('syncRoom')?.checked ?? true,
+    steps: 300,
+  };
+}
+
+function connectWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const host = location.host || '127.0.0.1:8000';
+  ws = new WebSocket(`${proto}://${host}/ws/simulate`);
+
+  ws.onopen = () => {
+    wsStatus.textContent = '● online';
+    wsStatus.className = 'text-emerald-400';
+    // 1) kirim join
+    ws.send(JSON.stringify({
+        type: "join",
+        room_id: roomId,
+        user_id: myIdentity.user_id,
+        nickname: myIdentity.nickname,
+        color: myIdentity.color,
+        password: sessionStorage.getItem('aetheris-room-pw') || '',
+        invite_code: sessionStorage.getItem('aetheris-room-code') || '',
+    }));
+    // 2) kirim simulasi pertama
+    setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(getPayload()));
+    }, 30);
+  };
+  ws.onclose = () => {
+    wsStatus.textContent = '● offline';
+    wsStatus.className = 'text-rose-400';
+    setTimeout(connectWS, 2000);
+  };
+  ws.onerror = () => {
+    wsStatus.textContent = '● error';
+    wsStatus.className = 'text-amber-400';
+  };
+    ws.onmessage = (ev) => {
+    const data = JSON.parse(ev.data);
+    if (data.error) { console.warn('WS error:', data.error); return; }
+
+    // Dispatch ke handler v6 (chat, user list, dll)
+    if (window.AETHERIS_EVENTS) {
+      window.AETHERIS_EVENTS.forEach(fn => { try { fn(data); } catch(e){} });
+    }
+
+    if (data.type === 'access_denied') {
+        if (window.AETHERIS_EVENTS) {
+            window.AETHERIS_EVENTS.forEach(fn => { try { fn(data); } catch(e){} });
+        }
+        return;
+    }
+
+    // Whitelist: hanya proses sebagai simulasi kalau ada c_agents
+    if (!data.c_agents || !Array.isArray(data.c_agents)) {
+      // bukan simulasi → jangan applyResult (fix crash)
+      return;
+    }
+
+    if (data.type === 'init') {
+        // Set flag private room
+        window.__aetherisRoomIsPrivate = data.is_private === true;
+        window.dispatchEvent(new Event('aetheris-room-flag'));
+
+        if (data.last_state) {
+            setTimeout(() => applyResult(data.last_state), 100);
+        }
+    }
+    applyResult(data);
+  };
+}
+
+// register event bus untuk v6-rooms
+window.AETHERIS_EVENTS = window.AETHERIS_EVENTS || [];
+
+function scheduleSend() {
+  clearTimeout(sendTimer);
+  sendTimer = setTimeout(() => {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(getPayload()));
+  }, 120);
+}
+
+function applyResult(r) {
+  updateScene(r);
+  chart.data.labels = r.t.map((_, i) => i);
+  chart.data.datasets[0].data = r.a;
+  chart.data.datasets[1].data = r.c_mean;
+  chart.update('none');
+  renderStatuses(r.statuses, r.metrics);
+
+  if (r.rl) updateRL(r.rl);
+  if (r._federated) {
+    fedBadge.classList.add('bg-amber-500/30','text-amber-300');
+    setTimeout(() => fedBadge.classList.remove('bg-amber-500/30','text-amber-300'), 400);
+  }
+  if (r._from_nick) {
+    // highlight singkat
+    document.getElementById('roomBadge').classList.add('ring-2','ring-amber-400');
+    setTimeout(() => document.getElementById('roomBadge').classList.remove('ring-2','ring-amber-400'), 500);
+  }
+}
+
+function updateRL(rl) { /* ...sama seperti v5... */ }
+function renderStatuses(statuses, metrics) { /* ...sama seperti v5... */ }
+
+// Stats polling
+setInterval(async () => {
+  try {
+    const r = await fetch('/api/federation/stats');
+    const d = await r.json();
+    fedBadge.textContent = `Fed: ${d.local_clients}`;
+    redisBadge.textContent = `Redis: ${d.redis_enabled ? 'on' : 'off'}`;
+    redisBadge.className = d.redis_enabled
+      ? 'badge bg-emerald-500/30 text-emerald-300'
+      : 'badge bg-rose-500/30 text-rose-300';
+  } catch {}
+}, 3000);
+
+// Expose
+// ============================================================
+// Expose API ke v5-extras.js & v6-rooms.js
+// ============================================================
+let lastResult = null;
+const resultListeners = [];
+let replayMode = false;
+
+// simpan applyResult asli
+const _origApplyResult = applyResult;
+applyResult = function(r) {
+  lastResult = r;
+  resultListeners.forEach(fn => { try { fn(r); } catch(e){ console.warn(e); } });
+  if (!replayMode) _origApplyResult(r);
+};
+
+function renderFrameAt(idx) {
+  if (!lastResult) return;
+  const res = lastResult;
+  const frame = {
+    t: res.t,
+    a: res.a,
+    c_mean: res.c_mean,
+    c_agents: res.c_agents.slice(0, idx + 1),
+    positions: res.positions,
+    edges: res.edges,
+    rewiring_events: res.rewiring_events,
+    statuses: res.statuses,
+    metrics: res.metrics,
+  };
+  _origApplyResult(frame);
+}
+
+window.AETHERIS = {
+  // v5 API (timeline scrubber)
+  getLastResult: () => lastResult,
+  onResult: (fn) => { resultListeners.push(fn); return () => {
+    const i = resultListeners.indexOf(fn); if (i >= 0) resultListeners.splice(i, 1);
+  }; },
+  renderFrameAt,
+  resumeLive: () => { replayMode = false; if (lastResult) _origApplyResult(lastResult); },
+  sendNow: () => {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(getPayload()));
+  },
+
+  // v6 API (rooms + chat)
+  get ws() { return ws; },
+  getIdentity: () => myIdentity,
+  getRoomId: () => roomId,
+  send: (obj) => { if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); },
+  setRoom: (newRoom) => {
+    roomId = newRoom;
+    const url = new URL(location.href);
+    url.searchParams.set('room', newRoom);
+    history.replaceState({}, '', url);
+    if (ws) { ws.close(); }  // trigger reconnect via onclose
+  },
+
+  // v5 reload preset
+  reloadPresets: () => window.AETHERIS?.reloadPresets?.(),
+};
+
+// Cek apakah user sudah punya identitas (via cookie atau flag)
+function hasIdentity() {
+  // Cek localStorage guest flag
+  if (localStorage.getItem('aetheris-guest-mode') === '1') return 'guest';
+  return null; // belum tahu — v7-auth.js akan cek cookie
+}
+
+// Jangan auto-connect. Tunggu event dari v7-auth.js
+window.addEventListener('aetheris-identity-ready', (e) => {
+  const mode = e.detail?.mode || 'guest';
+  if (mode === 'guest') {
+    // Set nickname Guest-xxxx instead of Anon-xxxx
+    if (myIdentity.nickname.startsWith('Anon-')) {
+      myIdentity.nickname = myIdentity.nickname.replace('Anon-', 'Guest-');
+      localStorage.setItem('aetheris-id', JSON.stringify(myIdentity));
+    }
+  }
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    connectWS();
+  }
+});
+
+window.dispatchEvent(new Event('aetheris-ready'));
+
+// Fallback: kalau v7-auth.js gagal load, auto-connect setelah 1.5 detik
+setTimeout(() => {
+  if (!ws) {
+    console.warn('[Aetheris] v7-auth.js tidak respond — fallback guest auto-connect');
+    localStorage.setItem('aetheris-guest-mode', '1');
+    window.dispatchEvent(new CustomEvent('aetheris-identity-ready', { detail: { mode: 'guest' } }));
+  }
+}, 1500);
+
+// WebGPU experimental
+let usingWebGPU = false;
+let wgpu = null;  // { renderer, THREE, nodeGroup, edgeGroup, particles, fog }
+
+window.addEventListener('aetheris-webgpu-toggle', async (e) => {
+  const enable = e.detail.enabled;
+  if (enable === usingWebGPU) return;
+
+  if (enable) {
+    try {
+      const mod = await import('/static/v6-webgpu.js');
+      const { renderer: wRenderer, THREE: WTHREE } = await mod.createWebGPURenderer(viz);
+
+      // ganti canvas
+      viz.innerHTML = '';
+      viz.appendChild(wRenderer.domElement);
+
+      const wScene = new WTHREE.Scene();
+      const wCamera = new WTHREE.PerspectiveCamera(55, viz.clientWidth / viz.clientHeight, 0.1, 200);
+      wCamera.position.set(0, 0, 9);
+
+      // reuse scene dari lastResult
+      const lastRes = window.AETHERIS.getLastResult?.() || (typeof lastResult !== 'undefined' ? lastResult : null);
+      if (!lastRes) { alert('Jalankan simulasi dulu.'); return; }
+
+      const parts = mod.buildWebGPUScene(WTHREE, wScene, lastRes);
+      wgpu = { renderer: wRenderer, THREE: WTHREE, scene: wScene, camera: wCamera, ...parts };
+      usingWebGPU = true;
+
+      // Stop WebGL animate loop
+      // (existing animate() masih jalan tapi renderer lama tidak di-render ke DOM)
+      renderer.domElement.style.display = 'none';
+
+      // Start WebGPU animate loop
+      let prev = performance.now();
+      const loop = () => {
+        if (!usingWebGPU) return;
+        const now = performance.now();
+        const dt = (now - prev) / 1000; prev = now;
+        mod.animateParticles(wgpu.particles, dt);
+        wCamera.rotation.y += dt * 0.15;
+        wgpu.renderer.render(wgpu.scene, wgpu.camera);
+        requestAnimationFrame(loop);
+      };
+      loop();
+    } catch (err) {
+      console.error(err);
+      alert('WebGPU gagal: ' + err.message);
+      document.getElementById('webgpuOn').checked = false;
+    }
+  } else {
+    usingWebGPU = false;
+    wgpu = null;
+    viz.innerHTML = '';
+    viz.appendChild(renderer.domElement);
+    renderer.domElement.style.display = '';
+  }
+});
+
+// Hook applyResult untuk update scene WebGPU juga
+const _applyInner = applyResult;
+applyResult = function(r) {
+  _applyInner(r);
+  if (usingWebGPU && wgpu) {
+    import('/static/v6-webgpu.js').then(mod => {
+      mod.updateWebGPUScene(wgpu.THREE, wgpu.nodeGroup, r);
+    });
+  }
+};
+
+</script>
+<script type="module" src="/static/v5-extras.js"></script>
+<script type="module" src="/static/v6-rooms.js"></script>
+<script type="module" src="/static/v6-webgpu.js"></script>
+<script type="module" src="/static/v7-auth.js"></script>
+<script type="module" src="/static/v8-voice.js"></script>
+<script type="module" src="/static/v8-rooms-pro.js"></script>
+<script type="module" src="/static/v8-ui-polish.js"></script>
+<script type="module" src="/static/v9-share.js"></script>
+<script type="module" src="/static/v10-admin.js"></script>
+<script type="module" src="/static/v10-i18n.js"></script>
+<script type="module" src="/static/v10-record.js"></script>
+<script type="module" src="/static/v10-e2ee.js"></script>
+<script src="/static/v10-buttons-fix.js"></script>
+
+<!-- Room badge -->
+<div id="roomBadge" class="glass rounded-lg px-3 py-2 text-xs flex items-center gap-2">
+  <span class="text-slate-400">Room:</span>
+  <span id="roomName" class="font-mono text-cyan-300">—</span>
+  <span class="text-slate-500">•</span>
+  <span id="userCount" class="text-emerald-300">0</span>
+  <button id="copyRoom" class="text-slate-400 hover:text-cyan-300" title="Copy room URL">📋</button>
+</div>
+
+<!-- WebGPU toggle (di panel Parameter, jika belum ada) -->
+<div id="webgpuToggleWrap" class="mt-3 p-3 border border-slate-700 rounded-lg hidden">
+  <label class="flex items-center gap-2 text-sm">
+    <input type="checkbox" id="webgpuOn" class="accent-emerald-500" />
+    <span class="text-slate-300">⚡ WebGPU Renderer (experimental)</span>
+  </label>
+  <label class="flex items-center gap-2">
+    <input type="checkbox" id="syncRoom" checked class="accent-emerald-500" />
+    <span class="text-slate-300">Sync Room (broadcast ke user lain)</span>
+  </label>
+  <div id="webgpuStatus" class="text-xs text-slate-500 mt-1">detecting...</div>
+</div>
+
+<!-- Chat sidebar -->
+<button id="chatToggle" class="fixed bottom-3 right-3 z-40 glass rounded-full w-12 h-12 flex items-center justify-center text-cyan-300 hover:text-cyan-100">
+  💬
+  <span id="chatUnread" style="display:none" class="absolute -top-1 -right-1 bg-rose-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center">0</span>
+</button>
+
+<div id="chatPanel" style="display:none" class="fixed top-0 right-0 h-full w-80 z-50 glass border-l border-slate-700 flex flex-col">
+  <div class="p-3 border-b border-slate-700 flex justify-between items-center">
+    <div>
+      <div class="text-sm font-semibold text-cyan-300">Room Chat</div>
+      <div class="text-xs text-slate-400"><span id="roomLabel">—</span> • <span id="usersInline">0 users</span></div>
+    </div>
+    <button id="chatClose" class="text-slate-400 hover:text-rose-300">✕</button>
+  </div>
+  <div id="userList" class="p-2 border-b border-slate-700 max-h-32 overflow-y-auto text-xs"></div>
+  <div id="chatMessages" class="flex-1 overflow-y-auto p-3 space-y-2 text-sm"></div>
+  <div class="p-3 border-t border-slate-700 flex gap-2">
+    <input id="chatInput" placeholder="Ketik pesan..." maxlength="500"
+      class="flex-1 bg-slate-900/80 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 outline-none" />
+    <button id="chatSend" class="bg-cyan-500 hover:bg-cyan-400 text-white text-sm px-3 rounded-lg">→</button>
+  </div>
+</div>
+
+</body>
+</html>
